@@ -1,0 +1,465 @@
+Path: ./main.go
+Content:
+package main
+
+import (
+	"os"
+	"zug/compiler"
+)
+
+func main() {
+
+	var c compiler.Compiler
+
+	mode := 0
+
+	for _, arg := range os.Args[1:] {
+		switch mode {
+		case 0:
+			switch arg {
+			case "-o":
+				mode = 1
+			case "-f":
+				mode = 2
+			default:
+				c.InputFile = arg
+			}
+		case 1:
+			c.OutputFile = arg
+			mode = 0
+		case 2:
+			c.Plarform = arg
+			mode = 0
+		}
+	}
+
+	c.Compile()
+}
+
+----------------------------------------
+Path: ./go.mod
+Content:
+module zug
+
+go 1.20
+
+----------------------------------------
+Path: ./parser/AST.go
+Content:
+package parser
+
+import (
+	"zug/lexer"
+)
+
+type Parser struct {
+	Root    *[]*Node
+	Current *[]*Node
+	Last    []*[]*Node
+}
+
+type NodeClass int
+
+const (
+	UnkownNode NodeClass = iota
+)
+
+type Node struct {
+	Class NodeClass
+	Value any
+}
+
+func NewParser(tokens *[]lexer.Token) Parser {
+	var parser Parser
+	var newNodeRoot []*Node
+
+	parser.Current = &newNodeRoot
+	parser.Root = &newNodeRoot
+	parser.Last = append(parser.Last, &newNodeRoot)
+
+	return parser
+}
+
+func (p *Parser) Parse(tokens *[]lexer.Token) *[]*Node {
+
+	cop := []lexer.Token{}
+	var line uint = 1
+
+	save := func() {
+		p.mast(&cop)
+		cop = cop[:0]
+	}
+
+	for _, token := range *tokens {
+		if token.Line != line {
+			if len(cop) != 0 {
+				save()
+			}
+			line = token.Line
+		} else if token.Type == lexer.EOF || token.Type == lexer.EOL {
+			if len(cop) != 0 {
+				save()
+			}
+		}
+		if token.Type != lexer.EOF && token.Type != lexer.EOL {
+			cop = append(cop, token)
+		}
+	}
+
+	return p.Root
+}
+
+----------------------------------------
+Path: ./parser/Parser.go
+Content:
+package parser
+
+import (
+	"fmt"
+	"zug/lexer"
+)
+
+func (p Parser) mast(tokens *[]lexer.Token) {
+	fmt.Println(tokens)
+}
+
+----------------------------------------
+Path: ./test/example
+Content:
+"helll world" d;d
+----------------------------------------
+Path: ./test/test
+Content:
+
+----------------------------------------
+Path: ./compiler/compiler.go
+Content:
+package compiler
+
+import (
+	"fmt"
+	"os"
+	"zug/lexer"
+	"zug/parser"
+)
+
+type Compiler struct {
+	OutputFile string
+	InputFile  string
+	Plarform   string
+}
+
+func (c Compiler) Compile() {
+	compileFile(c.InputFile)
+}
+
+func compileFile(file string) {
+	src, err := os.ReadFile(file)
+	if err != nil {
+		println("Read file \"" + file + "\" error")
+		os.Exit(1)
+	}
+
+	var tokenizer lexer.Tokenizer
+	tokens := tokenizer.Tokenize(&src)
+	*tokens = append(*tokens, lexer.Token{Type: lexer.EOF})
+
+	// Create and run the parser
+	p := parser.NewParser(tokens)
+	program := p.Parse(tokens)
+
+	fmt.Println(program)
+
+}
+
+----------------------------------------
+Path: ./lexer/Lexer.go
+Content:
+package lexer
+
+import "unicode"
+
+var Line uint = 1
+
+func (t Tokenizer) Tokenize(src *[]byte) *[]Token {
+	input := *src
+	var tokens []Token
+	length := len(input)
+	pos := 0
+
+	for pos < length {
+		ch := input[pos]
+
+		// Пропуск пробелов и управляющих символов
+		if isWhitespace(ch) {
+			pos++
+			continue
+		}
+
+		// Однострочный комментарий //
+		if ch == '/' && pos+1 < length && input[pos+1] == '/' {
+			pos += 2
+			for pos < length && input[pos] != '\n' {
+				pos++
+			}
+			continue
+		}
+
+		// Многострочный комментарий /* ... */
+		if ch == '/' && pos+1 < length && input[pos+1] == '*' {
+			pos += 2
+			for pos < length-1 {
+				if input[pos] == '*' && input[pos+1] == '/' {
+					pos += 2
+					break
+				}
+				pos++
+			}
+			continue
+		}
+
+		start := pos
+
+		// Идентификаторы и ключевые слова
+		if isAlpha(ch) || ch == '_' {
+			for pos < length && (isAlnum(input[pos]) || input[pos] == '_') {
+				pos++
+			}
+			value := string(input[start:pos])
+			typ, ok := TokenTypes[value]
+			if !ok {
+				typ = ID
+			}
+			tokens = append(tokens, Token{Type: typ, Value: value, Pos: []uint{uint(start), uint(pos)}, Line: Line})
+			continue
+		}
+
+		// Числа: INT, FLOAT, HEX
+		if isDigit(ch) {
+			isFloat := false
+			if ch == '0' && pos+1 < length && (input[pos+1] == 'x' || input[pos+1] == 'X') {
+				// Hex
+				pos += 2
+				for pos < length && isHexDigit(input[pos]) {
+					pos++
+				}
+				tokens = append(tokens, Token{Type: HEX, Value: string(input[start:pos]), Pos: []uint{uint(start), uint(pos)}, Line: Line})
+			} else {
+				// Int or Float
+				for pos < length && isDigit(input[pos]) {
+					pos++
+				}
+				if pos < length && input[pos] == '.' {
+					isFloat = true
+					pos++
+					for pos < length && isDigit(input[pos]) {
+						pos++
+					}
+				}
+				tokType := INT
+				if isFloat {
+					tokType = FLOAT
+				}
+				tokens = append(tokens, Token{Type: tokType, Value: string(input[start:pos]), Pos: []uint{uint(start), uint(pos)}, Line: Line})
+			}
+			continue
+		}
+
+		// Строки
+		if ch == '"' {
+			pos++
+			for pos < length && input[pos] != '"' {
+				if input[pos] == '\\' && pos+1 < length {
+					pos += 2
+				} else {
+					pos++
+				}
+			}
+			if pos < length && input[pos] == '"' {
+				pos++
+			}
+			tokens = append(tokens, Token{Type: STRING, Value: string(input[start:pos]), Pos: []uint{uint(start), uint(pos)}, Line: Line})
+			continue
+		}
+
+		// Операторы и скобки
+		found := false
+		for l := 3; l >= 1; l-- {
+			if pos+l <= length {
+				slice := input[pos : pos+l]
+				if typ, ok := TokenTypes[string(slice)]; ok {
+					tokens = append(tokens, Token{Type: typ, Value: string(slice), Pos: []uint{uint(pos), uint(pos + l)}, Line: Line})
+					pos += l
+					found = true
+					break
+				}
+			}
+		}
+		if found {
+			continue
+		}
+
+		// Неизвестный символ — просто пропускаем или можно выдать ошибку
+		pos++
+	}
+
+	return &tokens
+}
+
+func isWhitespace(ch byte) bool {
+	if ch == '\n' {
+		Line++
+	}
+	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+}
+
+func isAlpha(ch byte) bool {
+	return unicode.IsLetter(rune(ch))
+}
+
+func isAlnum(ch byte) bool {
+	return unicode.IsLetter(rune(ch)) || unicode.IsDigit(rune(ch))
+}
+
+func isDigit(ch byte) bool {
+	return '0' <= ch && ch <= '9'
+}
+
+func isHexDigit(ch byte) bool {
+	return ('0' <= ch && ch <= '9') ||
+		('a' <= ch && ch <= 'f') ||
+		('A' <= ch && ch <= 'F')
+}
+
+----------------------------------------
+Path: ./lexer/Token.go
+Content:
+package lexer
+
+type TokenType int
+
+const (
+	ID TokenType = iota
+
+	STRING
+	INT
+	FLOAT
+	HEX
+
+	LET
+	VAR
+	CONST
+	IF
+	ELSE
+	ELIF
+	FOR
+	RET
+	TYPE
+	FN
+	AS
+	RANGE
+	IMPORT
+
+	LPAREN
+	RPAREN
+	LBRACE
+	RBRACE
+	LBRACK
+	RBRACK
+
+	ASSIGN
+	STAR
+	DIV
+	ADD
+	SUB
+
+	COLON
+	DOT
+	COMMA
+	NON
+
+	LHS
+	GTR
+	SET
+	FASSIGN
+	NASSIGN
+	LAND
+	LOR
+	LASSIGN
+	MASSIGN
+	DASSIGN
+	SASSIGN
+	AASSIGN
+
+	EOF
+	EOL
+)
+
+var TokenTypes = map[string]TokenType{
+	"let":    LET,
+	"var":    VAR,
+	"const":  CONST,
+	"if":     IF,
+	"else":   ELSE,
+	"elif":   ELIF,
+	"for":    FOR,
+	"type":   TYPE,
+	"fn":     FN,
+	"as":     AS,
+	"range":  RANGE,
+	"import": IMPORT,
+
+	"(": LPAREN,
+	")": RPAREN,
+	"{": LBRACE,
+	"}": RBRACE,
+	"[": LBRACK,
+	"]": RBRACK,
+
+	"=": ASSIGN,
+	"+": ADD,
+	"-": SUB,
+	"*": STAR,
+	"/": DIV,
+	"!": NON,
+
+	":": COLON,
+	".": DOT,
+	",": COMMA,
+
+	";": EOL,
+
+	">>": LHS,
+	"<<": GTR,
+	"->": SET,
+	":=": FASSIGN,
+	"!=": NASSIGN,
+	"&&": LAND,
+	"||": LOR,
+	"==": LASSIGN,
+	"*=": MASSIGN,
+	"/=": DASSIGN,
+	"-=": SASSIGN,
+	"+=": AASSIGN,
+}
+
+type Token struct {
+	Type  TokenType
+	Value string
+	Pos   []uint
+	Line  uint
+}
+
+type Tokenizer struct {
+}
+
+func (tt TokenType) String() string {
+	for name, t := range TokenTypes {
+		if t == tt {
+			return name
+		}
+	}
+	return "UNKNOWN"
+}
+
+----------------------------------------

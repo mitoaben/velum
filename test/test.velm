@@ -1,0 +1,51 @@
+import "alib" as a
+import "blib"
+
+class SomeClass {
+    Public:
+        a, b int
+
+        fn Init(a int, b int) {
+            this.a = a
+            this.b = b
+        }
+}
+
+class SomeChild: SomeClass {
+    Public:
+        fn PrintAB() -> void {
+            print(a, b)
+        }
+}
+
+fn main(args []string) -> int {
+    let newClass = SomeChild(10, 20)
+    newClass.PrintAB()
+
+    var t [?]int = [1,2,3,4,5,6,,8,9]
+
+    tt int = range(t){
+        print(tt)
+    }
+
+    var y map = string:string {
+        "1":"one",
+        "2":"two"
+    }
+
+    var y1, y2 = range(y) {
+        print("`y1` = `y2`")
+    }
+
+    a.PrintA() // a
+    blib.PrintB() // b
+
+    var e [3]int = [1,2,3]
+    print(e[1]) // 2
+    e[1] = 3
+    print(e[1]) // 3
+    *((&e) + sizeof(int)) = 4
+    print(e[1]) // 4
+
+    ret 0
+}
